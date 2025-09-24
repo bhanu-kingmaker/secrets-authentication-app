@@ -18,12 +18,20 @@ env.config();
 
 app.use(
   session({
+    store: new (pgSession(session))({
+      pool: db, // Reuse your pg client
+      tableName: "session"
+    }),
     secret: process.env.SESSION_SECRET,
     resave: false,
-    saveUninitialized: true,
-    // For production, you might want to set cookie.secure and other options
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === "production", // true in production
+      maxAge: 1000 * 60 * 60 * 24 // 1 day
+    }
   })
 );
+
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
