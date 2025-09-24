@@ -41,7 +41,17 @@ const db = new pg.Client({
   }
 });
 
-db.connect();
+db.on('error', (err) => {
+  console.error('Unexpected error on idle client', err);
+});
+
+db.connect()
+  .then(() => console.log('Connected to DB'))
+  .catch(err => {
+    console.error('Failed to connect to DB:', err);
+    process.exit(1); // stop app if DB connection fails
+  });
+
 
 app.set("view engine", "ejs"); // Add this to enable EJS rendering
 
