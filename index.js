@@ -6,165 +6,188 @@ import passport from "passport";
 import { Strategy } from "passport-local";
 import GoogleStrategy from "passport-google-oauth2";
 import session from "express-session";
-import connectPgSimple from "connect-pg-simple";
-import dotenv from "dotenv";
-
-dotenv.config();
+import env from "dotenv";
 
 const app = express();
-const PORT = process.env.PORT || 5500;
+
+// Change here: use dynamic port from environment or fallback to 3000
+const port = process.env.PORT || 5500;
+
 const saltRounds = 10;
+env.config();
 
-// --- PostgreSQL Pool for Sessions & Users ---
-const pgPool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL, // Neon URL
-  ssl: { rejectUnauthorized: false },
-});
-
-// --- Session Store ---
-const PgSession = connectPgSimple(session);
 app.use(
   session({
-    store: new PgSession({ pool: pgPool, tableName: "session" }),
-    secret: process.env.SESSION_SECRET || "SUPERSECRET",
+    secret: process.env.SESSION_SECRET,
     resave: false,
-    saveUninitialized: false,
-    cookie: { maxAge: 1000 * 60 * 60 * 24 }, // 1 day
+    saveUninitialized: true,
+    // For production, you might want to set cookie.secure and other options
   })
 );
-
-// --- Middleware ---
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static("public"));
+
 app.use(passport.initialize());
 app.use(passport.session());
 
-// --- PostgreSQL Client for User Data ---
 const db = new pg.Client({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  user: process.env.PG_USER,
+  host: process.env.PG_HOST,
+  database: process.env.PG_DATABASE,
+  password: process.env.PG_PASSWORD,
+  port: process.env.PG_PORT,
 });
 db.connect();
 
-// --- Routes ---
-app.get("/", (req, res) => res.render("home.ejs"));
-app.get("/login", (req, res) => res.render("login.ejs"));
-app.get("/register", (req, res) => res.render("register.ejs"));
+app.set("view engine", "ejs"); // Add this to enable EJS rendering
+
+app.get("/", (req, res) => {
+  res.render("home.ejs");
+});
+
+app.get("/login", (req, res) => {
+  res.render("login.ejs");
+});
+
+app.get("/register", (req, res) => {
+  res.render("register.ejs");
+});
 
 app.get("/logout", (req, res, next) => {
-  req.logout((err) => {
-    if (err) return next(err);
+  req.logout(function (err) {
+    if (err) {
+      return next(err);
+    }
     res.redirect("/");
   });
 });
 
-app.get("/secrets", async (req, res) => {
+app.get("/secrets", (req, res) => {
   if (req.isAuthenticated()) {
-    try {
-      const result = await db.query("SELECT secret FROM users WHERE email=$1", [
-        req.user.email,
-      ]);
-      const secret = result.rows[0]?.secret || "Don't tell anyone Bhanupranay is a good boy";
-      res.render("secrets.ejs", { secret });
-    } catch (err) {
-      console.log(err);
-      res.redirect("/");
-    }
+    res.render("secrets.ejs");
   } else {
     res.redirect("/login");
   }
 });
 
-app.get("/submit", (req, res) => {
-  if (req.isAuthenticated()) res.render("submit.ejs");
-  else res.redirect("/login");
-});
-
-app.post("/submit", async (req, res) => {
-  if (!req.isAuthenticated()) return res.redirect("/login");
-  const submittedSecret = req.body.secret;
-  try {
-    await db.query("UPDATE users SET secret=$1 WHERE email=$2", [
-      submittedSecret,
-      req.user.email,
-    ]);
-    res.redirect("/secrets");
-  } catch (err) {
-    console.log(err);
-    res.redirect("/submit");
-  }
-});
-
-// --- Auth Routes ---
-app.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 app.get(
-  "/auth/google/secrets",
-  passport.authenticate("google", { successRedirect: "/secrets", failureRedirect: "/login" })
+  "/auth/google",
+  passport.authenticate("google", {
+    scope: ["profile", "email"],
+  })
 );
 
-// --- Local Auth ---
-passport.use(
-  "local",
-  new Strategy(async function verify(username, password, cb) {
-    try {
-      const result = await db.query("SELECT * FROM users WHERE email=$1", [username]);
-      if (!result.rows.length) return cb("User not found");
-
-      const user = result.rows[0];
-      bcrypt.compare(password, user.password, (err, valid) => {
-        if (err) return cb(err);
-        return cb(null, valid ? user : false);
-      });
-    } catch (err) {
-      cb(err);
-    }
+app.get(
+  "/auth/google/secrets",
+  passport.authenticate("google", {
+    successRedirect: "/secrets",
+    failureRedirect: "/login",
   })
 );
 
 app.post(
   "/login",
-  passport.authenticate("local", { successRedirect: "/secrets", failureRedirect: "/login" })
+  passport.authenticate("local", {
+    successRedirect: "/secrets",
+    failureRedirect: "/login",
+  })
 );
 
 app.post("/register", async (req, res) => {
-  const { username: email, password } = req.body;
-  try {
-    const checkResult = await db.query("SELECT * FROM users WHERE email=$1", [email]);
-    if (checkResult.rows.length) return res.redirect("/login");
+  const email = req.body.username;
+  const password = req.body.password;
 
-    const hash = await bcrypt.hash(password, saltRounds);
-    const result = await db.query(
-      "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
-      [email, hash]
-    );
-    const user = result.rows[0];
-    req.login(user, (err) => (err ? console.log(err) : res.redirect("/secrets")));
+  try {
+    const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
+
+    if (checkResult.rows.length > 0) {
+      res.redirect("/login"); // Fix here: should be res.redirect, not req.redirect
+    } else {
+      bcrypt.hash(password, saltRounds, async (err, hash) => {
+        if (err) {
+          console.error("Error hashing password:", err);
+          res.redirect("/register"); // handle error
+        } else {
+          const result = await db.query(
+            "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
+            [email, hash]
+          );
+          const user = result.rows[0];
+          req.login(user, (err) => {
+            if (err) {
+              console.error(err);
+              return res.redirect("/login");
+            }
+            console.log("success");
+            res.redirect("/secrets");
+          });
+        }
+      });
+    }
   } catch (err) {
     console.log(err);
-    res.redirect("/register");
+    res.redirect("/register"); // handle error
   }
 });
 
-// --- Google OAuth ---
+passport.use(
+  "local",
+  new Strategy(async function verify(username, password, cb) {
+    try {
+      const result = await db.query("SELECT * FROM users WHERE email = $1 ", [
+        username,
+      ]);
+      if (result.rows.length > 0) {
+        const user = result.rows[0];
+        const storedHashedPassword = user.password;
+        bcrypt.compare(password, storedHashedPassword, (err, valid) => {
+          if (err) {
+            console.error("Error comparing passwords:", err);
+            return cb(err);
+          } else {
+            if (valid) {
+              return cb(null, user);
+            } else {
+              return cb(null, false);
+            }
+          }
+        });
+      } else {
+        return cb(null, false); // Fix: use cb(null, false) to indicate no user
+      }
+    } catch (err) {
+      console.log(err);
+      return cb(err);
+    }
+  })
+);
+
 passport.use(
   "google",
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "/auth/google/secrets",
+      callbackURL: process.env.GOOGLE_CALLBACK_URL || "http://localhost:5500/auth/google/secrets",
       userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo",
     },
     async (accessToken, refreshToken, profile, cb) => {
       try {
-        const result = await db.query("SELECT * FROM users WHERE email=$1", [profile.email]);
-        if (!result.rows.length) {
+        console.log(profile);
+        const result = await db.query("SELECT * FROM users WHERE email = $1", [
+          profile.email,
+        ]);
+        if (result.rows.length === 0) {
           const newUser = await db.query(
             "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
             [profile.email, "google"]
           );
           return cb(null, newUser.rows[0]);
-        } else return cb(null, result.rows[0]);
+        } else {
+          return cb(null, result.rows[0]);
+        }
       } catch (err) {
         return cb(err);
       }
@@ -172,9 +195,14 @@ passport.use(
   )
 );
 
-// --- Passport Serialize/Deserialize ---
-passport.serializeUser((user, cb) => cb(null, user));
-passport.deserializeUser((user, cb) => cb(null, user));
+passport.serializeUser((user, cb) => {
+  cb(null, user);
+});
 
-// --- Start Server ---
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+passport.deserializeUser((user, cb) => {
+  cb(null, user);
+});
+
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
