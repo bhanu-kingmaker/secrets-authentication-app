@@ -48,9 +48,9 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-  secure: false, // ✅ allow cookies over HTTP for now
-  maxAge: 1000 * 60 * 60 * 24
-}
+      secure: false,
+      maxAge: 1000 * 60 * 60 * 24
+    }
   })
 );
 
@@ -86,14 +86,25 @@ app.get("/secrets", async (req, res) => {
   if (req.isAuthenticated()) {
     try {
       const result = await db.query("SELECT secret FROM users WHERE id = $1", [req.user.id]);
-      const userSecret = result.rows[0]?.secret || "No secret submitted yet.";
+      const userSecret = result.rows[0]?.secret || "";
       res.render("secrets.ejs", { secret: userSecret });
     } catch (err) {
-      console.error("Error fetching secret:", err);
+      console.error("Error loading secret:", err);
       res.render("secrets.ejs", { secret: "Error loading secret." });
     }
   } else {
     res.redirect("/login");
+  }
+});
+
+app.post("/submit", async (req, res) => {
+  const userSecret = req.body.secret;
+  try {
+    await db.query("UPDATE users SET secret = $1 WHERE id = $2", [userSecret, req.user.id]);
+    res.redirect("/secrets");
+  } catch (err) {
+    console.error("Error saving secret:", err);
+    res.redirect("/secrets");
   }
 });
 
@@ -131,23 +142,12 @@ app.post("/login", (req, res, next) => {
   })(req, res, next);
 });
 
-app.post("/submit", async (req, res) => {
-  const userSecret = req.body.secret;
-  try {
-    await db.query("UPDATE users SET secret = $1 WHERE id = $2", [userSecret, req.user.id]);
-    res.redirect("/secrets");
-  } catch (err) {
-    console.error("Error saving secret:", err);
-    res.redirect("/secrets");
-  }
-});
-
 app.post("/register", async (req, res) => {
   const email = req.body.username;
   const password = req.body.password;
 
   try {
-    const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+    const checkResult = await db.query("SELECT id FROM users WHERE email = $1", [email]);
 
     if (checkResult.rows.length > 0) {
       res.redirect("/login");
@@ -158,7 +158,7 @@ app.post("/register", async (req, res) => {
           res.redirect("/register");
         } else {
           const result = await db.query(
-            "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
+            "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id, email, password",
             [email, hash]
           );
           const user = result.rows[0];
@@ -182,7 +182,7 @@ passport.use(
   "local",
   new Strategy(async function verify(username, password, cb) {
     try {
-      const result = await db.query("SELECT * FROM users WHERE email = $1", [username]);
+      const result = await db.query("SELECT id, email, password FROM users WHERE email = $1", [username]);
       if (result.rows.length > 0) {
         const user = result.rows[0];
         const storedHashedPassword = user.password;
@@ -219,10 +219,10 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, cb) => {
       try {
-        const result = await db.query("SELECT * FROM users WHERE email = $1", [profile.email]);
+        const result = await db.query("SELECT id, email FROM users WHERE email = $1", [profile.email]);
         if (result.rows.length === 0) {
           const newUser = await db.query(
-            "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
+            "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id, email",
             [profile.email, "google"]
           );
           return cb(null, newUser.rows[0]);
@@ -237,14 +237,14 @@ passport.use(
 );
 
 passport.serializeUser((user, cb) => {
-  cb(null, user.id); // Store only user ID
+  cb(null, user.id);
 });
 
 passport.deserializeUser(async (id, cb) => {
   try {
-    const result = await db.query("SELECT * FROM users WHERE id = $1", [id]);
+    const result = await db.query("SELECT id, email, secret FROM users WHERE id = $1", [id]);
     if (result.rows.length > 0) {
-      cb(null, result.rows[0]); // Restore full user object
+      cb(null, result.rows[0]);
     } else {
       cb(null, false);
     }
