@@ -6,39 +6,13 @@ import passport from "passport";
 import { Strategy } from "passport-local";
 import GoogleStrategy from "passport-google-oauth2";
 import session from "express-session";
-import env from "dotenv";
-import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+import env from "dotenv";
 
-const app = express();
-
-// Change here: use dynamic port from environment or fallback to 3000
-const port = process.env.PORT || 5500;
-
-const saltRounds = 10;
 env.config();
-
-app.use(
-  session({
-    store: new (pgSession(session))({
-      pool: db, // Reuse your pg client
-      tableName: "session"
-    }),
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production", // true in production
-      maxAge: 1000 * 60 * 60 * 24 // 1 day
-    }
-  })
-);
-
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(express.static("public"));
-
-app.use(passport.initialize());
-app.use(passport.session());
+const app = express();
+const port = process.env.PORT || 5500;
+const saltRounds = 10;
 
 const db = new pg.Client({
   user: process.env.PG_USER,
@@ -51,19 +25,41 @@ const db = new pg.Client({
   }
 });
 
-db.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
+db.on("error", (err) => {
+  console.error("Unexpected error on idle client", err);
 });
 
 db.connect()
-  .then(() => console.log('Connected to DB'))
-  .catch(err => {
-    console.error('Failed to connect to DB:', err);
-    process.exit(1); // stop app if DB connection fails
+  .then(() => console.log("Connected to DB"))
+  .catch((err) => {
+    console.error("Failed to connect to DB:", err);
+    process.exit(1);
   });
 
+const pgSession = connectPgSimple(session);
 
-app.set("view engine", "ejs"); // Add this to enable EJS rendering
+app.use(
+  session({
+    store: new pgSession({
+      pool: db,
+      tableName: "session"
+    }),
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 1000 * 60 * 60 * 24
+    }
+  })
+);
+
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.static("public"));
+app.set("view engine", "ejs");
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 app.get("/", (req, res) => {
   res.render("home.ejs");
@@ -97,7 +93,7 @@ app.get("/secrets", (req, res) => {
 app.get(
   "/auth/google",
   passport.authenticate("google", {
-    scope: ["profile", "email"],
+    scope: ["profile", "email"]
   })
 );
 
@@ -105,7 +101,7 @@ app.get(
   "/auth/google/secrets",
   passport.authenticate("google", {
     successRedirect: "/secrets",
-    failureRedirect: "/login",
+    failureRedirect: "/login"
   })
 );
 
@@ -113,7 +109,7 @@ app.post(
   "/login",
   passport.authenticate("local", {
     successRedirect: "/secrets",
-    failureRedirect: "/login",
+    failureRedirect: "/login"
   })
 );
 
@@ -122,17 +118,15 @@ app.post("/register", async (req, res) => {
   const password = req.body.password;
 
   try {
-    const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [
-      email,
-    ]);
+    const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [email]);
 
     if (checkResult.rows.length > 0) {
-      res.redirect("/login"); // Fix here: should be res.redirect, not req.redirect
+      res.redirect("/login");
     } else {
       bcrypt.hash(password, saltRounds, async (err, hash) => {
         if (err) {
           console.error("Error hashing password:", err);
-          res.redirect("/register"); // handle error
+          res.redirect("/register");
         } else {
           const result = await db.query(
             "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
@@ -144,7 +138,6 @@ app.post("/register", async (req, res) => {
               console.error(err);
               return res.redirect("/login");
             }
-            console.log("success");
             res.redirect("/secrets");
           });
         }
@@ -152,7 +145,7 @@ app.post("/register", async (req, res) => {
     }
   } catch (err) {
     console.log(err);
-    res.redirect("/register"); // handle error
+    res.redirect("/register");
   }
 });
 
@@ -160,9 +153,7 @@ passport.use(
   "local",
   new Strategy(async function verify(username, password, cb) {
     try {
-      const result = await db.query("SELECT * FROM users WHERE email = $1 ", [
-        username,
-      ]);
+      const result = await db.query("SELECT * FROM users WHERE email = $1", [username]);
       if (result.rows.length > 0) {
         const user = result.rows[0];
         const storedHashedPassword = user.password;
@@ -179,7 +170,7 @@ passport.use(
           }
         });
       } else {
-        return cb(null, false); // Fix: use cb(null, false) to indicate no user
+        return cb(null, false);
       }
     } catch (err) {
       console.log(err);
@@ -195,14 +186,11 @@ passport.use(
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: process.env.GOOGLE_CALLBACK_URL || "http://localhost:5500/auth/google/secrets",
-      userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo",
+      userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo"
     },
     async (accessToken, refreshToken, profile, cb) => {
       try {
-        console.log(profile);
-        const result = await db.query("SELECT * FROM users WHERE email = $1", [
-          profile.email,
-        ]);
+        const result = await db.query("SELECT * FROM users WHERE email = $1", [profile.email]);
         if (result.rows.length === 0) {
           const newUser = await db.query(
             "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
