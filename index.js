@@ -131,6 +131,17 @@ app.post("/login", (req, res, next) => {
   })(req, res, next);
 });
 
+app.post("/submit", async (req, res) => {
+  const userSecret = req.body.secret;
+  try {
+    await db.query("UPDATE users SET secret = $1 WHERE id = $2", [userSecret, req.user.id]);
+    res.redirect("/secrets");
+  } catch (err) {
+    console.error("Error saving secret:", err);
+    res.redirect("/secrets");
+  }
+});
+
 app.post("/register", async (req, res) => {
   const email = req.body.username;
   const password = req.body.password;
