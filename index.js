@@ -82,11 +82,16 @@ app.get("/logout", (req, res, next) => {
   });
 });
 
-app.get("/secrets", (req, res) => {
-  console.log("Authenticated:", req.isAuthenticated());
-  console.log("User:", req.user);
+app.get("/secrets", async (req, res) => {
   if (req.isAuthenticated()) {
-    res.render("secrets.ejs");
+    try {
+      const result = await db.query("SELECT secret FROM users WHERE id = $1", [req.user.id]);
+      const userSecret = result.rows[0]?.secret || "No secret submitted yet.";
+      res.render("secrets.ejs", { secret: userSecret });
+    } catch (err) {
+      console.error("Error fetching secret:", err);
+      res.render("secrets.ejs", { secret: "Error loading secret." });
+    }
   } else {
     res.redirect("/login");
   }
