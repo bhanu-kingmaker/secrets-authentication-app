@@ -48,9 +48,9 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 1000 * 60 * 60 * 24
-    }
+  secure: false, // ✅ allow cookies over HTTP for now
+  maxAge: 1000 * 60 * 60 * 24
+}
   })
 );
 
@@ -83,6 +83,8 @@ app.get("/logout", (req, res, next) => {
 });
 
 app.get("/secrets", (req, res) => {
+  console.log("Authenticated:", req.isAuthenticated());
+  console.log("User:", req.user);
   if (req.isAuthenticated()) {
     res.render("secrets.ejs");
   } else {
@@ -105,13 +107,24 @@ app.get(
   })
 );
 
-app.post(
-  "/login",
-  passport.authenticate("local", {
-    successRedirect: "/secrets",
-    failureRedirect: "/login"
-  })
-);
+app.post("/login", (req, res, next) => {
+  passport.authenticate("local", (err, user, info) => {
+    if (err) {
+      console.error("Auth error:", err);
+      return next(err);
+    }
+    if (!user) {
+      return res.redirect("/login");
+    }
+    req.login(user, (err) => {
+      if (err) {
+        console.error("Login error:", err);
+        return next(err);
+      }
+      return res.redirect("/secrets");
+    });
+  })(req, res, next);
+});
 
 app.post("/register", async (req, res) => {
   const email = req.body.username;
