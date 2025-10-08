@@ -62,7 +62,12 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 app.get("/", (req, res) => {
-  res.render("home.ejs");
+  try {
+    res.render("home.ejs");
+  } catch (err) {
+    console.error("Error rendering home:", err);
+    res.status(500).send("Internal Server Error");
+  }
 });
 
 app.get("/login", (req, res) => {
