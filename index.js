@@ -208,11 +208,20 @@ passport.use(
 );
 
 passport.serializeUser((user, cb) => {
-  cb(null, user);
+  cb(null, user.id); // Store only user ID
 });
 
-passport.deserializeUser((user, cb) => {
-  cb(null, user);
+passport.deserializeUser(async (id, cb) => {
+  try {
+    const result = await db.query("SELECT * FROM users WHERE id = $1", [id]);
+    if (result.rows.length > 0) {
+      cb(null, result.rows[0]); // Restore full user object
+    } else {
+      cb(null, false);
+    }
+  } catch (err) {
+    cb(err);
+  }
 });
 
 app.listen(port, () => {
